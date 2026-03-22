@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::{io::BufRead, result::Result, sync::Arc};
 
 use nu_cmd_base::input_handler::{CmdArgument, operate};
 use nu_engine::command_prelude::*;
-use nu_protocol::Config;
+use nu_protocol::{
+    Config, PipelineMetadata, Signals, copy_with_signals, shell_error::bridge::ShellErrorBridge,
+};
 
 struct Arguments {
     cell_paths: Option<Vec<CellPath>>,
@@ -27,6 +29,7 @@ impl Command for AnsiStrip {
         Signature::build("ansi strip")
             .input_output_types(vec![
                 (Type::String, Type::String),
+                (Type::Binary, Type::Binary),
                 (Type::List(Box::new(Type::String)), Type::List(Box::new(Type::String))),
                 (Type::table(), Type::table()),
                 (Type::record(), Type::record()),
@@ -55,7 +58,12 @@ impl Command for AnsiStrip {
         let cell_paths = (!cell_paths.is_empty()).then_some(cell_paths);
         let config = stack.get_config(engine_state);
         let args = Arguments { cell_paths, config };
-        operate(action, args, input, call.head, engine_state.signals())
+
+        if let PipelineData::ByteStream(stream, metadata) = input {
+            strip_stream(stream, metadata, engine_state.signals())
+        } else {
+            operate(action, args, input, call.head, engine_state.signals())
+        }
     }
 
     fn examples(&self) -> Vec<Example<'_>> {
@@ -83,6 +91,42 @@ impl Command for AnsiStrip {
             },
         ]
     }
+}
+
+fn strip_stream(
+    stream: ByteStream,
+    metadata: Option<PipelineMetadata>,
+    signals: &Signals,
+) -> Result<PipelineData, ShellError> {
+    let span = stream.span();
+    let type_ = stream.type_();
+    let Some(mut reader) = stream.reader() else {
+        return Ok(PipelineData::Empty);
+    };
+
+    let err_factory = IoError::factory(span, None);
+    let from_io_err = move |err| match ShellErrorBridge::try_from(err) {
+        Ok(ShellErrorBridge(err)) => err,
+        Err(err) => err_factory(err).into(),
+    };
+
+    let signals = signals.clone();
+    Ok(PipelineData::byte_stream(
+        ByteStream::from_fn(span, signals.clone(), type_, move |buf| {
+            let bytes = reader.fill_buf().map_err(&from_io_err)?;
+            if bytes.is_empty() {
+                return Ok(false);
+            }
+
+            let writer = nu_utils::strip_ansi_writer(buf);
+            copy_with_signals(bytes, writer, span, &signals)?;
+
+            let len = bytes.len();
+            reader.consume(len);
+            Ok(true)
+        }),
+        metadata,
+    ))
 }
 
 fn action(input: &Value, args: &Arguments, _span: Span) -> Value {

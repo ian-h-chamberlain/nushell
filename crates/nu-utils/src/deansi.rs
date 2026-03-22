@@ -1,4 +1,7 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    io::{self, Read, Write},
+};
 
 /// Removes ANSI escape codes and some ASCII control characters
 ///
@@ -37,6 +40,14 @@ pub fn strip_ansi_likely(string: &str) -> Cow<'_, str> {
     }
     // Else case includes failures to parse!
     Cow::Borrowed(string)
+}
+
+/// Returns a writer that removes ANSI escape codes, writing other bytes to the given `writer`.
+///
+/// Keeps `\n` removes `\r`, `\t` etc.
+///
+pub fn strip_ansi_writer(writer: impl Write) -> impl Write {
+    strip_ansi_escapes::Writer::new(writer)
 }
 
 /// Removes ANSI escape codes and some ASCII control characters

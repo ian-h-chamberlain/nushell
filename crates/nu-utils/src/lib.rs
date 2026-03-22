@@ -23,6 +23,7 @@ pub use utils::{
 pub use casing::IgnoreCaseExt;
 pub use deansi::{
     strip_ansi_likely, strip_ansi_string_likely, strip_ansi_string_unlikely, strip_ansi_unlikely,
+    strip_ansi_writer,
 };
 pub use emoji::contains_emoji;
 pub use flatten_json::JsonFlattener;
